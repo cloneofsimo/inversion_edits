@@ -1,2 +1,4 @@
 __debug*
 pycache*
+build
+*.egg-info
