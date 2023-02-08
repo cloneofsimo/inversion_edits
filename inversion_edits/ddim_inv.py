@@ -94,11 +94,7 @@ def ddim_inversion_latent(
     prev_timestep = None
 
     for t in tqdm(reversed(scheduler.timesteps)):
-        # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
         latent_model_input = latents
-
-        # latent_model_input = scheduler.scale_model_input(latent_model_input, timestep=t)
-
         noise_pred = pipe.unet(
             latent_model_input, t, encoder_hidden_states=cond_emb
         ).sample
@@ -163,12 +159,3 @@ def ddim_first_skipped_latent(
         )
 
     return latents
-
-
-def edict_inversion_latent(
-    pipe: StableDiffusionPipeline,
-    image: PIL.Image,
-    num_inference_steps: int = 50,
-    condition_prompt: str = "",
-):
-    pass
