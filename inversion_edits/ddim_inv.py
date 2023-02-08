@@ -38,16 +38,22 @@ def _backward_ddim(x_tm1, alpha_t, alpha_tm1, eps_xt):
     x_{t} - x_{t - 1} = sqrt(a) ((sqrt(1/b) - sqrt(1/a)) * x_{t-1} + (sqrt(1/a - 1) - sqrt(1/b - 1)) * eps_{t-1})
     From https://arxiv.org/pdf/2105.05233.pdf, section F.
     """
-   
+
     a, b = alpha_t, alpha_tm1
-    sa = a ** 0.5
-    sb = b ** 0.5
-    
-    return sa * ((1/sb - 1/sa) * x_tm1 + ((1/a - 1) ** 0.5 - (1/b - 1) ** 0.5) * eps_xt) + x_tm1
-        
+    sa = a**0.5
+    sb = b**0.5
+
+    return (
+        sa
+        * (
+            (1 / sb - 1 / sa) * x_tm1
+            + ((1 / a - 1) ** 0.5 - (1 / b - 1) ** 0.5) * eps_xt
+        )
+        + x_tm1
+    )
+
 
 def _prepare(pipe, image, condition_prompt):
-
     scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
     print("Scheduler for Pipe is now DDIMScheduler")
 
@@ -113,6 +119,51 @@ def ddim_inversion_latent(
             if prev_timestep >= 0
             else scheduler.final_alpha_cumprod
         )
+
+        latents = _backward_ddim(
+            x_tm1=latents,
+            alpha_t=alpha_prod_t,
+            alpha_tm1=alpha_prod_t_prev,
+            eps_xt=noise_pred,
+        )
+
+    return latents
+
+
+@torch.no_grad()
+def ddim_first_skipped_latent(
+    pipe: StableDiffusionPipeline,
+    image: PIL.Image,
+    num_inference_steps: int = 50,
+    condition_prompt: str = "",
+    skip_ratio: float = 0.5,
+):
+    latents, cond_emb, scheduler = _prepare(pipe, image, condition_prompt)
+    total_steps = int(num_inference_steps * (1 + skip_ratio))
+    initial_steps = total_steps - num_inference_steps
+
+    scheduler.set_timesteps(total_steps)
+    subsampled_schedule = list(scheduler.timesteps[::2])[:initial_steps] + list(
+        scheduler.timesteps[2 * initial_steps :]
+    )
+
+    prev_timestep = None
+    for idx, t in enumerate(tqdm(reversed(subsampled_schedule))):
+        # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
+        latent_model_input = latents
+
+
+        noise_pred = pipe.unet(
+            latent_model_input, t, encoder_hidden_states=cond_emb
+        ).sample
+
+        alpha_prod_t = scheduler.alphas_cumprod[t]
+        alpha_prod_t_prev = (
+            scheduler.alphas_cumprod[prev_timestep]
+            if prev_timestep
+            else scheduler.final_alpha_cumprod
+        )
+        prev_timestep = t
 
         latents = _backward_ddim(
             x_tm1=latents,
