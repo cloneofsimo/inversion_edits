@@ -43,14 +43,7 @@ def _backward_ddim(x_tm1, alpha_t, alpha_tm1, eps_xt):
     sa = a**0.5
     sb = b**0.5
 
-    return (
-        sa
-        * (
-            (1 / sb - 1 / sa) * x_tm1
-            + ((1 / a - 1) ** 0.5 - (1 / b - 1) ** 0.5) * eps_xt
-        )
-        + x_tm1
-    )
+    return sa * ((1 / sb) * x_tm1 + ((1 / a - 1) ** 0.5 - (1 / b - 1) ** 0.5) * eps_xt)
 
 
 def _prepare(pipe, image, condition_prompt):
@@ -98,6 +91,7 @@ def ddim_inversion_latent(
     latents, cond_emb, scheduler = _prepare(pipe, image, condition_prompt)
 
     scheduler.set_timesteps(num_inference_steps)
+    prev_timestep = None
 
     for t in tqdm(reversed(scheduler.timesteps)):
         # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
@@ -109,16 +103,13 @@ def ddim_inversion_latent(
             latent_model_input, t, encoder_hidden_states=cond_emb
         ).sample
 
-        prev_timestep = (
-            t - scheduler.config.num_train_timesteps // scheduler.num_inference_steps
-        )
-
         alpha_prod_t = scheduler.alphas_cumprod[t]
         alpha_prod_t_prev = (
             scheduler.alphas_cumprod[prev_timestep]
-            if prev_timestep >= 0
+            if prev_timestep is not None
             else scheduler.final_alpha_cumprod
         )
+        prev_timestep = t
 
         latents = _backward_ddim(
             x_tm1=latents,
@@ -151,7 +142,6 @@ def ddim_first_skipped_latent(
     for idx, t in enumerate(tqdm(reversed(subsampled_schedule))):
         # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
         latent_model_input = latents
-
 
         noise_pred = pipe.unet(
             latent_model_input, t, encoder_hidden_states=cond_emb
